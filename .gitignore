@@ -1,0 +1,7 @@
+raw_cache/
+f1_cache/
+__pycache__/
+*.pyc
+f1env/
+.env
+.DS_Store
