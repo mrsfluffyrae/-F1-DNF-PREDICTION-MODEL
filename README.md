@@ -1,10 +1,19 @@
 # 🏎️ F1 DNF Predictor
 
-Which drivers are most likely to **not finish** Sunday's race?
+Which drivers are most likely to not finish Sunday's race?
 
-This machine learning project estimates every driver's chance of a DNF (did not finish) using historical race results, team reliability trends and starting grid positions. It doesn't try to guess exact incidents. It says things like *"drivers in a spot like this retire roughly X% of the time"*, which is closer to a weather forecast than a crystal ball.
+This machine learning project estimates every driver's chance of a DNF (did not finish) using historical race results, team reliability trends, and starting grid positions. It doesn't try to guess exact incidents; it estimates baseline likelihoods (e.g., *"drivers in a scenario like this retire roughly X% of the time"*), operating more like a weather forecast than a crystal ball.
 
-Built around the **2026 Mexico City Grand Prix**, but it can be used for any race once you give it a starting grid.
+Built around the modern turbo-hybrid and current regulation eras, it can generate pre-race risk forecasts for any Grand Prix once supplied with a starting grid.
+
+---
+
+## 🏁 Track Record & Race Forecasts
+
+| Grand Prix | Pre-Race Prediction | Post-Race Verification | Status |
+| :--- | :--- | :--- | :--- |
+| **Mexico City GP** | [`mexico_dnf_predictions.csv`](mexico_dnf_predictions.csv) | [`mexico_comparison.csv`](mexico_comparison.csv) | Completed |
+| **São Paulo GP** | [`brazil_dnf_predictions.csv`](brazil_dnf_predictions.csv) | *Post-race verification* | Forecast Locked (Pre-Race Tagged) |
 
 ---
 
@@ -33,64 +42,65 @@ Built around the **2026 Mexico City Grand Prix**, but it can be used for any rac
 
 ## 🗃️ The Data
 
-All data comes from [Jolpica-F1](https://github.com/jolpica/jolpica-f1), the community-run successor to the Ergast API. It's free and needs no login.
+All data comes from **Jolpica-F1**, the community-run successor to the Ergast API (free, open-access, no authentication required).
 
-* **Coverage:** every race from **2014 to the latest completed 2026 round** (the turbo-hybrid era). Older cars broke down far more often, which would muddy the picture for modern cars.
-* **Size:** just over 5,100 driver-race rows for 2014 to 2025, plus the 2026 season so far.
-* **DNF definition:** a driver **finished (`0`)** if their status is `Finished`, `Lapped`, or `+1 Lap`, `+2 Laps` and so on. Anything else (`Collision`, `Engine`, `Gearbox`, `Brakes`, `Retired`...) is a **DNF (`1`)**. Disqualified, excluded and withdrawn entries are dropped.
+- **Coverage:** Every race from 2014 to the latest completed 2026 round. Older eras are excluded because pre-hybrid cars exhibited substantially higher mechanical attrition rates that distort modern baseline probabilities.
+- **Size:** Over 5,100 driver-race rows spanning 2014–2025, plus current 2026 rounds.
+- **DNF Definition:** A driver finished (`0`) if classified with status `Finished`, `Lapped`, `+1 Lap`, `+2 Laps`, etc. Non-finishes (`1`) encompass mechanical dropouts (`Engine`, `Gearbox`, `Brakes`, `Retired`) and track incidents (`Collision`, `Accident`). Disqualified, excluded, and withdrawn entries are omitted.
 
 ---
 
-## 🛠️ Features
+## 🛠️ Feature Engineering
 
-Every rolling metric uses `.shift(1)`, which skips the current race, so features only contain information available **before lights out**.
+Every rolling metric incorporates a strict `.shift(1)` offset to exclude the target race, ensuring zero data leakage before lights out.
 
 | Feature | Description |
-|---|---|
-| `grid_pos` | Starting grid position (a pit lane start counts as 20th) |
-| `pit_lane_start` | `1` if starting from the pit lane, otherwise `0` |
-| `driver_dnf_last10` | Driver's DNF rate over their previous 10 races |
-| `driver_dnf_career` | Driver's DNF rate over all previous races |
-| `driver_prior_races` | Career starts so far (a rough proxy for experience / rookie status) |
-| `team_dnf_last10` | Team's DNF rate over its previous 10 races |
-| `team_dnf_season_prior` | Team's DNF rate so far this season |
-| `circuit_dnf_prior` | How often entries have retired at this circuit in past years |
+| :--- | :--- |
+| `grid_pos` | Starting grid position (pit lane starts count as 20th / back of grid) |
+| `pit_lane_start` | Binary flag (`1` if starting from the pit lane, `0` otherwise) |
+| `driver_dnf_last10` | Driver's DNF frequency across their previous 10 starts |
+| `driver_dnf_career` | Driver's career-long historical DNF rate |
+| `driver_prior_races` | Total career race starts (experience proxy / rookie adjustment) |
+| `team_dnf_last10` | Constructor's collective DNF frequency across the previous 10 events |
+| `team_dnf_season_prior`| Constructor's DNF frequency within the current season to date |
+| `circuit_dnf_prior` | Historical circuit attrition rate at this venue in prior editions |
 
 ---
 
 ## 🤖 Training and Validation
 
-* **Split by time, not at random:** trained on 2014 to 2022, tested on 2023 onwards (2026 included). A random split would let the model peek at the future.
-* **Two models:** logistic regression (simple, explainable) and gradient boosting (`HistGradientBoostingClassifier`, kept shallow because there isn't much data). The forecast for a race uses the **unweighted average of both**.
-* **Metrics:** log loss and Brier score (are the probabilities any good?), plus PR-AUC and ROC-AUC (does it rank risky drivers above safe ones?). Plain accuracy is deliberately avoided: with a 14 to 18% DNF rate, "everybody finishes" already scores 82 to 86%.
+- **Temporal Validation Split:** Trained on 2014–2022 and evaluated out-of-sample on 2023–2026. Random K-fold splitting is deliberately avoided to prevent lookahead bias.
+- **Model Architectures:**
+  - **Logistic Regression:** Transparent, well-calibrated baseline for continuous risk estimation.
+  - **Gradient Boosting (`HistGradientBoostingClassifier`):** Constrained shallow boosting suited for tabular datasets with limited row volume.
+  - Final race forecasts blend both models using an unweighted ensemble average.
+- **Evaluation Criteria:** Prioritizes **Log Loss** and **Brier Score** (probability calibration) alongside **PR-AUC** and **ROC-AUC** (relative risk discrimination). Raw classification accuracy is avoided due to severe class imbalance (~14–18% DNF base rate).
 
 ### Benchmark Comparison
-
 *Train: 3,689 rows (18.0% DNF) | Test: 1,782 rows (14.0% DNF)*
 
 | Model | Log Loss ↓ | Brier ↓ | PR-AUC ↑ | ROC-AUC ↑ |
-|---|---|---|---|---|
-| Baseline: same for all | 0.4103 | 0.1218 | 0.1397 | 0.5000 |
-| Baseline: driver last 10 | 0.4644 | 0.1275 | 0.1716 | 0.5430 |
-| Gradient boosting | 0.4107 | 0.1221 | 0.1576 | 0.5394 |
-| **Logistic regression** | **0.3951** | **0.1178** | **0.2057** | **0.6200** |
+| :--- | :---: | :---: | :---: | :---: |
+| **Baseline: same for all** | 0.4103 | 0.1218 | 0.1397 | 0.5000 |
+| **Baseline: driver last 10** | 0.4644 | 0.1275 | 0.1716 | 0.5430 |
+| **Gradient Boosting** | 0.4107 | 0.1221 | 0.1576 | 0.5394 |
+| **Logistic Regression** | **0.3951** | **0.1178** | **0.2057** | **0.6200** |
 
-What that says, honestly: **logistic regression is the only model that clearly beats both baselines**, and the gain is modest but real (a random ranking would score a PR-AUC of about 0.14, the DNF rate). Gradient boosting did not beat "just guess the average" on log loss, which is typical when a flexible model is trained on a few thousand rows.
+*Takeaway:* Logistic regression delivers the strongest out-of-sample calibration and ranking power. Gradient boosting struggles to surpass simple naive baseline rates on log loss due to sample size constraints.
 
 ### Probability Calibration
+Empirical evaluation of predicted probabilities vs. actual observed retirement frequencies:
 
-When the logistic regression says X%, how often do drivers really retire?
-
-| Predicted | 10.0% | 12.0% | 14.0% | 15.8% | 17.7% | 21.6% |
-|:---|:---:|:---:|:---:|:---:|:---:|:---:|
-| **Observed** | 6.7% | 10.1% | 13.1% | 16.2% | 14.8% | 22.9% |
+| Metric | Bin 1 | Bin 2 | Bin 3 | Bin 4 | Bin 5 | Bin 6 |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Predicted Risk** | 10.0% | 12.0% | 14.0% | 15.8% | 17.7% | 21.6% |
+| **Observed Rate** | 6.7% | 10.1% | 13.1% | 16.2% | 14.8% | 22.9% |
 
 ### Highest-Risk Out-of-Sample Predictions
+Top 15 riskiest predictions flagged by logistic regression in test evaluation (5 of 15 retired = 33.3%, vs. 29.0% expected):
 
-The 15 entries the logistic regression rated riskiest in the test period. **5 of the 15 retired (33%)**, against about 29% predicted on average.
-
-| Season | Round | Grand Prix | Driver | Grid | Status | DNF | Predicted risk |
-|:---:|:---:|---|:---:|:---:|---|:---:|:---:|
+| Season | Round | Grand Prix | Driver | Grid | Status | DNF | Predicted Risk |
+| :---: | :---: | :--- | :---: | :---: | :--- | :---: | :---: |
 | 2023 | 5 | Miami Grand Prix | SAR | 20 | Lapped | 0 | 31.1% |
 | 2023 | 4 | Azerbaijan Grand Prix | GAS | 17 | Finished | 0 | 30.0% |
 | 2026 | 15 | Azerbaijan Grand Prix | ALO | 21 | Retired | 1 | 29.7% |
@@ -109,125 +119,153 @@ The 15 entries the logistic regression rated riskiest in the test period. **5 of
 
 ---
 
-## 🇲🇽 Case Study: 2026 Mexico City Grand Prix
+## 🇧🇷 Forecast: 2026 São Paulo Grand Prix (2026-11-08)
 
-The forecast was generated before the race from the starting grid as I entered it (see the grid note below). Top of the ranking:
+Pre-race predictions generated prior to the start of the race at Interlagos:
 
-| Driver | Team | Grid used | Blend | Logistic | Boosting |
-|---|---|:---:|:---:|:---:|:---:|
-| Stroll | Aston Martin | 20 | **37.8%** | 26.2% | 49.4% |
-| Pérez | Cadillac | 21 | **36.9%** | 27.6% | 46.3% |
-| Bottas | Cadillac | 22 | **32.2%** | 27.1% | 37.2% |
-| Alonso | Aston Martin | 18 | **26.0%** | 27.1% | 24.9% |
-| Sainz | Williams | 16 | **19.9%** | 21.0% | 18.7% |
+| Driver | Constructor | Grid | P(DNF) | P(Logistic) | P(Boosting) | Driver DNF (Last 10) | Team DNF (Last 10) | Team DNF (Season Prior) |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **PER** | Cadillac | 22 | **0.31** | 0.31 | 0.31 | 0.30 | 0.45 | 0.39 |
+| **BOT** | Cadillac | 18 | **0.29** | 0.25 | 0.33 | 0.60 | 0.45 | 0.39 |
+| **STR** | Aston Martin | 17 | **0.25** | 0.27 | 0.24 | 0.70 | 0.50 | 0.50 |
+| **ALO** | Aston Martin | 8 | **0.20** | 0.21 | 0.18 | 0.30 | 0.50 | 0.50 |
+| **SAI** | Williams | 13 | **0.18** | 0.18 | 0.18 | 0.10 | 0.25 | 0.26 |
+| **BOR** | Audi | 19 | **0.17** | 0.19 | 0.15 | 0.10 | 0.05 | 0.16 |
+| **GAS** | Alpine | 16 | **0.16** | 0.18 | 0.15 | 0.10 | 0.20 | 0.13 |
+| **COL** | Alpine | 15 | **0.16** | 0.18 | 0.14 | 0.30 | 0.20 | 0.13 |
+| **VER** | Red Bull | 21 | **0.16** | 0.18 | 0.13 | 0.10 | 0.05 | 0.16 |
+| **LEC** | Ferrari | 14 | **0.15** | 0.15 | 0.16 | 0.10 | 0.10 | 0.11 |
+| **HAM** | Ferrari | 20 | **0.15** | 0.18 | 0.12 | 0.10 | 0.10 | 0.11 |
+| **LIN** | RB | 12 | **0.14** | 0.14 | 0.15 | 0.10 | 0.05 | 0.08 |
+| **ALB** | Williams | 9 | **0.13** | 0.15 | 0.12 | 0.40 | 0.25 | 0.26 |
+| **PIA** | McLaren | 10 | **0.13** | 0.14 | 0.13 | 0.10 | 0.10 | 0.18 |
+| **CAM** | Haas | 11 | **0.12** | 0.17 | 0.07 | NaN | 0.20 | 0.18 |
+| **BEA** | Haas | 6 | **0.10** | 0.13 | 0.07 | 0.30 | 0.20 | 0.18 |
+| **HAD** | Red Bull | 5 | **0.10** | 0.11 | 0.09 | 0.00 | 0.05 | 0.16 |
+| **RUS** | Mercedes | 7 | **0.09** | 0.11 | 0.08 | 0.20 | 0.10 | 0.11 |
+| **LAW** | RB | 3 | **0.09** | 0.10 | 0.08 | 0.00 | 0.05 | 0.08 |
+| **HUL** | Audi | 4 | **0.09** | 0.10 | 0.07 | 0.00 | 0.10 | 0.16 |
+| **ANT** | Mercedes | 2 | **0.08** | 0.10 | 0.07 | 0.00 | 0.10 | 0.11 |
+| **NOR** | McLaren | 1 | **0.07** | 0.09 | 0.04 | 0.10 | 0.10 | 0.18 |
 
-* **Expected retirements:** about 3.2 cars (historical average: 3.7).
-* **Lowest risk:** Russell (6.3%), Norris (8.2%) and Leclerc (8.4%).
-
-### What actually happened
-
-Verstappen won, Hamilton was second and Antonelli's third place clinched the championship. **Five drivers retired**: Stroll (technical), Alonso (technical), Bottas (crash), Bearman (damage after contact on the restart) and Lindblad (taken out by Piastri).
-
-| Risk rank (of 22) | Driver | Predicted | What happened |
-|:---:|---|:---:|---|
-| 1 | Stroll | 37.8% | DNF (technical) |
-| 2 | Pérez | 36.9% | Finished (P17) |
-| 3 | Bottas | 32.2% | DNF (crash) |
-| 4 | Alonso | 26.0% | DNF (technical) |
-| 5 | Sainz | 19.9% | Finished (P15) |
-| 6 | Bearman | about 16% | DNF (damage) |
-| 16 | Lindblad | about 10% | DNF (collision) |
-
-* **3 of the model's 4 riskiest drivers retired, and 4 of its top 6.** Pérez was a miss.
-* **5 drivers retired against 3.2 expected,** so the model underestimated how chaotic the race was.
-* Lindblad's retirement was a collision caused by another driver, which no pre-race data can predict.
-* Full per-driver output is in `mexico_comparison.csv`, produced by `05_compare_results.py`.
-
-![Predicted risk vs what happened](mexico_dnf_chart.png)
-
-One race proves very little either way. Treat this as a sanity check, not proof.
-
-### A mistake worth owning
-
-The grid I fed the model had a data-entry error. Liam Lawson was disqualified from qualifying and started from the **pit lane**, but I entered him in 9th. That pushed every driver from Gasly down to Bottas back by one place (Stroll was entered 20th but started 19th, for example). The model only sees grid position as a single number, so the effect on the forecast is probably small, but the inputs weren't what they should have been. I kept the original forecast as it was instead of re-running it after the race, because that would no longer be a prediction.
+- **Expected number of DNFs this race (sum of probabilities):** `3.3`
+- **Historical field baseline:** `3.7`
 
 ---
 
-## 🧩 Problems I Ran Into
+## 🇲🇽 Case Study: 2026 Mexico City Grand Prix
 
-| Problem | What was going on | Fix |
-|---|---|---|
-| `FastF1` asked for an F1 account email | FastF1 now needs an F1 TV subscription for most of its data | Dropped it for ingestion. Finishing status comes from Jolpica, which needs no login. |
-| Jolpica `429 Too Many Requests` | The first script fired one request per race, back to back | Fetch a whole season per request, wait between requests, retry with longer pauses, and save finished seasons to disk |
-| Only 1,679 rows in the first dataset | Same rate limit. Rounds that failed simply vanished, with no loud error | Seasons are fetched in full and saved only when complete, and the script prints races per season (about 16 to 24 is right) |
-| `Lapped` drivers counted as DNFs | They finished, just slowly. The label code only recognised `+1 Lap` style statuses | Found by reading the status counts. `Lapped` now counts as finished. |
-| Risk of the model seeing the future | Features built from results could include the race being predicted | Rolling features use `.shift(1)`. Team stats are averaged per race first, so one car's result can't leak into its teammate's features. |
-| Hirakawa replaced Ocon at Haas | The script took its line-up from the last race, so it still listed Ocon | The grid file now decides who races, and a driver with no history inherits a teammate's team via `same_team_as` |
-| First prediction put everyone on grid 10 | New scripts were saved under different names, so the old ones ran | Check your files before panicking |
-| Wrong starting grid for Mexico | Lawson's pit lane start was missed, shifting 13 drivers by one place | Disclosed above. Next time: check the grid against the official classification before running. |
+The forecast was generated prior to lights out from the entered starting grid:
+
+| Driver | Team | Grid Used | Ensemble Blend | Logistic | Boosting |
+| :--- | :--- | :---: | :---: | :---: | :---: |
+| **Stroll** | Aston Martin | 20 | **37.8%** | 26.2% | 49.4% |
+| **Pérez** | Cadillac | 21 | **36.9%** | 27.6% | 46.3% |
+| **Bottas** | Cadillac | 22 | **32.2%** | 27.1% | 37.2% |
+| **Alonso** | Aston Martin | 18 | **26.0%** | 27.1% | 24.9% |
+| **Sainz** | Williams | 16 | **19.9%** | 21.0% | 18.7% |
+
+- **Expected retirements:** ~3.2 cars (historical average: 3.7).
+- **Lowest predicted risk:** Russell (6.3%), Norris (8.2%), Leclerc (8.4%).
+
+### Actual Race Outcome
+
+Verstappen won, Hamilton placed second, and Antonelli finished third. Five drivers retired: Stroll (technical), Alonso (technical), Bottas (crash), Bearman (damage after restart contact), and Lindblad (collision).
+
+| Risk Rank (of 22) | Driver | Predicted Risk | Actual Outcome |
+| :---: | :--- | :---: | :--- |
+| **1** | Stroll | 37.8% | **DNF (technical)** |
+| **2** | Pérez | 36.9% | Finished (P17) |
+| **3** | Bottas | 32.2% | **DNF (crash)** |
+| **4** | Alonso | 26.0% | **DNF (technical)** |
+| **5** | Sainz | 19.9% | Finished (P15) |
+| **6** | Bearman | ~16.0% | **DNF (damage)** |
+| **16** | Lindblad | ~10.0% | **DNF (collision)** |
+
+- **3 of the model's top 4 riskiest drivers retired**, as did **4 of its top 6**.
+- The model projected 3.2 retirements vs. 5 actual DNFs, underestimating late-race incident density.
+- Full per-driver breakdown is preserved in [`mexico_comparison.csv`](mexico_comparison.csv).
+
+> **A mistake worth owning:** The grid fed into the model included a manual entry error: Liam Lawson started from the pit lane due to a qualifying penalty but was input as 9th, shifting grid spots down by one for cars behind him. The pre-race forecast was preserved without revision to maintain integrity.
+
+---
+
+## 🧩 Debugging & Pipeline Challenges
+
+| Problem | Root Cause | Fix Applied |
+| :--- | :--- | :--- |
+| **FastF1 authentication requirement** | FastF1 API began requiring credentials for high-tier telemetry | Switched ingest pipeline to the open **Jolpica-F1** API. |
+| **Jolpica `HTTP 429: Too Many Requests`** | Pipeline sent sequential single-race calls too rapidly | Switched to full-season batch queries, implemented exponential backoff, and added local caching. |
+| **Missing dataset rows (~1,679 rows initially)** | Silent failures on rate-limited endpoints caused missing rounds | Implemented strict completeness checks ensuring each season fetches expected rounds before saving. |
+| **Lapped cars categorized as DNFs** | Rule logic misclassified non-lead-lap finishers as non-classified | Refined parser: `Lapped`, `+1 Lap`, `+2 Laps`, etc., evaluate strictly as finished (`0`). |
+| **Data leakage (lookahead bias)** | Feature extraction used aggregated season statistics containing future outcomes | Enforced `.shift(1)` across all rolling metrics and computed constructor stats at the race level before assigning to drivers. |
+| **Driver substitute edge cases** | Roster changes (e.g., reserve drivers) broke static driver lookups | Ingested `grid.csv` mapping and assigned unknown rookie entries a teammate baseline via `same_team_as`. |
+| **Overwritten local predictions** | Naming collisions in iterative prediction runs | Standardized explicit race-scoped output filenames (`grid_brazil.csv`, `brazil_dnf_predictions.csv`). |
 
 ---
 
 ## 🚀 Run It Yourself
 
 ```bash
-git clone https://github.com/mrsfluffyrae/f1-dnf-prediction.git
-cd f1-dnf-prediction
+# Clone the repository
+git clone https://github.com/mrsfluffyrae/-F1-DNF-PREDICTION-MODEL.git
+cd -F1-DNF-PREDICTION-MODEL
 
+# Setup virtual environment
 python3 -m venv f1env
 source f1env/bin/activate
 pip install pandas scikit-learn requests matplotlib
 
-python 01_fetch_data.py              # download results (a few minutes the first time)
-python 02_build_features.py          # build the label and features
-python 03_train_model.py             # train and test on a time-based split
-python 04_predict_race.py grid.csv   # predict the next race
-python 05_compare_results.py         # after the race: compare with the real result
+# Execute the pipeline
+python 01_fetch_data.py              # Download historical results via Jolpica
+python 02_build_features.py          # Compile features and DNF target labels
+python 03_train_model.py             # Train models & evaluate baseline metrics
+python 04_predict_race.py grid.csv   # Generate pre-race DNF risk predictions
+python 05_compare_results.py         # Post-race verification and metric logging
 ```
 
-`grid.csv` has one row per driver:
+### `grid.csv` Format
 
-```text
+```csv
 driver_code,grid,same_team_as
 HAM,1,
 RUS,2,
 ...
 HIR,19,BEA
 ```
-
-Use `0` for a pit lane start. `same_team_as` is only needed for a driver with no race history. To predict a different race, change the race settings at the top of `04_predict_race.py` and `05_compare_results.py` (name, date, circuit) and write a new grid file.
+*Use `0` or back-of-grid index for pit lane starts. `same_team_as` is used for reserve or new drivers lacking historical data.*
 
 ---
 
-## 📁 What's in the Repo
+## 📁 Repository Structure
 
 ```text
-01_fetch_data.py             downloads results from Jolpica
-features.py                  the DNF label and feature code, shared by steps 2 to 4
-02_build_features.py         builds the modelling table
-03_train_model.py            trains, tests, compares against baselines
-04_predict_race.py           ranks drivers by DNF probability for a race
-05_compare_results.py        compares the prediction with the real result
-grid.csv                     the Mexico City GP grid exactly as it was fed to the model
-mexico_dnf_predictions.csv   the forecast itself
-mexico_comparison.csv        forecast vs actual outcome, per driver
-mexico_dnf_chart.png         chart used in this README
-.gitignore                   keeps caches and virtual environments out of git
+├── .gitignore                    # Local environment, cache, and virtualenv ignores
+├── 01_fetch_data.py              # Ingests race data from Jolpica-F1 API
+├── features.py                   # Feature engineering logic shared across modules
+├── 02_build_features.py          # Compiles modeling dataset
+├── 03_train_model.py             # Trains models and generates benchmark metrics
+├── 04_predict_race.py            # Generates pre-race DNF probabilities for an upcoming GP
+├── 05_compare_results.py         # Evaluates predictions against official race classifications
+├── grid_template.csv             # Template for entering race grid positions
+├── grid_brazil.csv               # Input grid configuration for the São Paulo GP
+├── brazil_dnf_predictions.csv    # Official model forecast output for São Paulo
+├── mexico_dnf_predictions.csv    # Official model forecast output for Mexico City
+└── mexico_comparison.csv         # Post-race performance verification for Mexico City
 ```
 
 ---
 
-## ⚠️ Limitations and What I'd Do Next
+## ⚠️ Limitations & Next Steps
 
-* **A lot of DNFs are luck.** First-lap contact, debris and weather aren't in the data, so the model is better at "this car is unreliable" than "this driver will crash".
-* **2026 is a new-regulations season.** Older history only partly applies, and newer teams and stand-in drivers have little data (they get typical values filled in).
-* **The forecast blends two models that I only tested separately.** Given the benchmark, the next step is to evaluate the blend, or use logistic regression alone.
-* **Collisions and mechanical failures are lumped together,** even though they have different causes. Splitting them into two models is the obvious upgrade.
-* **Useful data sits behind a paywall.** Lap, tyre and telemetry data would need an F1 TV subscription.
+- **Inherent Stochasticity:** First-lap contacts, unpredictable weather swings, and puncture-causing debris have weak statistical correlation with historical rolling reliability.
+- **New Regulation Cycles:** Multi-year baseline metrics face structural degradation during major engine or aero regulation shifts.
+- **Model Blending:** The pipeline currently uses an unweighted average of Logistic Regression and HistGradientBoosting; tuning weights based on out-of-sample log loss is planned.
+- **Failure Mode Separation:** Splitting mechanical dropouts from driver accidents into separate multi-class or distinct survival models.
 
 ---
 
 ## 📜 Acknowledgments
 
-* Race data from the [Jolpica-F1 project](https://github.com/jolpica/jolpica-f1).
-* Built with pandas and scikit-learn. [FastF1](https://github.com/theOehrly/Fast-F1) was explored before switching data sources.
+- Race telemetry and historical classifications provided by the **Jolpica-F1** project.
+- Built using **pandas**, **scikit-learn**, and Python.
