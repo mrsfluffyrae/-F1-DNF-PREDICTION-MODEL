@@ -8,6 +8,7 @@ Run it two ways:
 The first run also writes grid_template.csv listing the driver codes, so you
 only have to fill in the starting positions.
 """
+import json
 import sys
 
 import numpy as np
@@ -21,10 +22,16 @@ from sklearn.preprocessing import StandardScaler
 from features import FEATURES, add_features, add_label
 
 # ----------------------------------------------------------- race settings
-SEASON = 2026
-RACE_NAME = "Mexico City Grand Prix"
-RACE_DATE = "2026-11-01"
-CIRCUIT_ID = "rodriguez"     # how the data names Autodromo Hermanos Rodriguez
+# The race itself is described in race.json, so you never need to edit this script.
+with open("race.json") as f:
+    race_cfg = json.load(f)
+SEASON = race_cfg["season"]
+RACE_NAME = race_cfg["race_name"]
+RACE_DATE = race_cfg["race_date"]
+CIRCUIT_ID = race_cfg["circuit_id"]
+PREFIX = race_cfg["prefix"]                         # names the output files
+EXPECTED_LAST_ROUND = race_cfg.get("expected_last_round")
+OUT_FILE = f"{PREFIX}_dnf_predictions.csv"
 DEFAULT_GRID = 10            # placeholder used for everyone until qualifying is done
 
 # ------------------------------------------------------------ load history
@@ -38,6 +45,9 @@ print(f"Latest race in your data: {last['race_name']} ({last_season}, round {las
 if last_season < SEASON:
     print(f"WARNING: no {SEASON} races found. Re-run 01_fetch_data.py. The line-up below "
           f"would be last year's, which is wrong.")
+if EXPECTED_LAST_ROUND is not None and (last_season, last_round) != (SEASON, EXPECTED_LAST_ROUND):
+    print(f"WARNING: the previous race should be round {EXPECTED_LAST_ROUND} of {SEASON}, but your data "
+          f"ends at round {last_round}. Run 01_fetch_data.py again (Jolpica can be slow to publish).")
 if CIRCUIT_ID not in set(raw["circuit_id"]):
     print(f"WARNING: circuit '{CIRCUIT_ID}' not found in the data; the circuit feature will be empty.")
 
@@ -123,5 +133,5 @@ expected = upcoming["p_dnf"].sum()
 typical = y_train.mean() * len(upcoming)
 print(f"\nExpected number of DNFs this race (sum of probabilities): {expected:.1f}")
 print(f"For reference, the historical average for a field this size is {typical:.1f}.")
-out.to_csv("mexico_dnf_predictions.csv", index=False)
-print("Saved to 'mexico_dnf_predictions.csv'.")
+out.to_csv(OUT_FILE, index=False)
+print(f"Saved to '{OUT_FILE}'.")

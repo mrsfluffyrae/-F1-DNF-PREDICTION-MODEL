@@ -5,10 +5,12 @@ Run it AFTER `python 01_fetch_data.py` has pulled the race into your data:
     python 05_compare_results.py
 
 It produces:
-    mexico_comparison.csv   every driver: predicted risk vs actual outcome
-    mexico_dnf_chart.png    a chart for your README
-    mexico_results.md       a short summary you can paste into your README
+    <prefix>_comparison.csv   every driver: predicted risk vs actual outcome
+    <prefix>_dnf_chart.png    a chart for your README
+    <prefix>_results.md       a short summary you can paste into your README
+(<prefix> comes from race.json, e.g. "brazil")
 """
+import json
 import sys
 
 import numpy as np
@@ -18,10 +20,13 @@ from sklearn.metrics import brier_score_loss, roc_auc_score
 from features import add_label
 
 # ----------------------------------------------------------- race settings
-SEASON = 2026
-CIRCUIT_ID = "rodriguez"
-RACE_NAME = "Mexico City Grand Prix"
-PRED_FILE = "mexico_dnf_predictions.csv"
+with open("race.json") as f:
+    race_cfg = json.load(f)
+SEASON = race_cfg["season"]
+CIRCUIT_ID = race_cfg["circuit_id"]
+RACE_NAME = race_cfg["race_name"]
+PREFIX = race_cfg["prefix"]
+PRED_FILE = f"{PREFIX}_dnf_predictions.csv"
 
 # ------------------------------------------------------------- load things
 pred = pd.read_csv(PRED_FILE)
@@ -83,7 +88,7 @@ print("\nReminder: this is ONE race with only a handful of retirements. It's a s
       "check, not proof that the model works (or doesn't).")
 
 # ------------------------------------------------------------- save files
-df.to_csv("mexico_comparison.csv", index=False)
+df.to_csv(f"{PREFIX}_comparison.csv", index=False)
 
 top5 = int(df.head(5)["dnf"].sum())
 lines = [
@@ -96,7 +101,7 @@ lines = [
 for r in df[(df["risk_rank"] <= 5) | (df["dnf"] == 1)].itertuples():
     what = f"DNF ({r.status})" if r.dnf == 1 else f"Finished (P{int(r.position)})"
     lines.append(f"| {r.risk_rank} | {r.driver_code} | {int(r.grid)} | {r.p_dnf:.1%} | {what} |")
-with open("mexico_results.md", "w") as f:
+with open(f"{PREFIX}_results.md", "w") as f:
     f.write("\n".join(lines) + "\n")
 
 try:
@@ -114,8 +119,8 @@ try:
     ax.legend(handles=[Patch(color="#d6336c", label="Retired"),
                        Patch(color="#b8b8b8", label="Finished")], loc="lower right")
     plt.tight_layout()
-    plt.savefig("mexico_dnf_chart.png", dpi=150)
-    print("\nSaved: mexico_comparison.csv, mexico_results.md, mexico_dnf_chart.png")
+    plt.savefig(f"{PREFIX}_dnf_chart.png", dpi=150)
+    print(f"\nSaved: {PREFIX}_comparison.csv, {PREFIX}_results.md, {PREFIX}_dnf_chart.png")
 except ImportError:
-    print("\nSaved: mexico_comparison.csv, mexico_results.md")
+    print(f"\nSaved: {PREFIX}_comparison.csv, {PREFIX}_results.md")
     print("For the chart, run 'pip install matplotlib' and run this script again.")
